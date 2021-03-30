@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+    <title>Crypto.Tax</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" type="text/css" href="lib/bootstrap.min.css">
+    <link rel="stylesheet" type="text/css" href="main.css">
+  </head>
+  <body>
+    <h1 class="mx-2">Crypto.Tax</h1>
+    <div id="ui-main" class="w-100" align="center">
+      <div class="container">
+        <div class="input-group" v-if="!showFileSelect">
+          <button class="btn btn-outline-secondary" type="button" @click="showFileSelect=true">Import</button>
+          <button class="btn btn-outline-secondary" type="button" @click="showAddress = !showAddress">Add Address</button>
+          <label class="input-group-text" v-if="!showAddress">Accounts</label>
+          <select class="form-select" v-if="!showAddress" v-model="address">
+            <option v-for="a in accounts">{{a}}</option>
+          </select>
+          <input type="text" class="form-control" placeholder="Add ETH Address" v-model="address" v-if="showAddress">
+          <select class="form-select" v-model="year" style="max-width:100px;" v-if="address!=''">
+            <option v-for="y in years">{{y}}</option>
+          </select>
+          <select class="form-select" v-model="month" style="max-width:100px;" v-if="address!=''">
+            <option v-for="(m,i) in months" :value="i">{{m}}</option>
+          </select>
+          <button class="btn btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">Load</button>
+          <ul class="dropdown-menu">
+            <li>
+              <a class="dropdown-item" href="#" @click="loadDB()">DB</a>
+            </li>
+            <li>
+              <a class="dropdown-item" href="#" @click="pullData('ETH')" v-if="address!=''">Etherscan</a>
+            </li>
+            <li>
+              <a class="dropdown-item" href="#" @click="pullData('BNB')" v-if="address!=''">BSCScan</a>
+            </li>
+          </ul>
+          <button class="btn btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">Export</button>
+          <ul class="dropdown-menu" v-if="tx">
+            <li>
+              <a class="dropdown-item" href="#" @click="exportData()" v-if="nCoins>0">JSON</a>
+            </li>
+            <li>
+              <a class="dropdown-item" href="#" @click="exportPrice()">JSON Price</a>
+            </li>
+            <li>
+              <a class="dropdown-item" href="#" @click="csvByCoin()">CSV by Coin</a>
+            </li>
+          </ul>
+        </div>
+        <div class="input-group" v-if="showFileSelect">
+          <input type="file" class="form-control" accept=".json" id="file" v-on:change="loadFile()">
+        </div>
+      </div>
+      <div class="container">
+        <div class="input-group mt-2" v-if="nCoins>0">
+          <label class="input-group-text">Filter By</label>
+          <select class="form-select" v-model="filter.by">
+            <option v-for="f in filter.types">{{f}}</option>
+          </select>
+          <select class="form-select" v-if="filter.by == 'address'" v-model="filter.address">
+            <option v-for="a in accounts">{{a}}</option>
+          </select>
+          <select class="form-select" v-if="filter.by == 'time'" v-model="filter.time[0]">
+            <option v-for="y in years">{{y}}</option>
+          </select>
+          <select class="form-select" v-if="filter.by == 'time'" v-model="filter.time[1]">
+            <option v-for="(m,i) in months" :value="i">{{m}}</option>
+          </select>
+          <select class="form-select" v-if="filter.by == 'time'" v-model="filter.time[2]">
+            <option v-for="y in years">{{y}}</option>
+          </select>
+          <select class="form-select" v-if="filter.by == 'time'" v-model="filter.time[3]">
+            <option v-for="(m,i) in months" :value="i">{{m}}</option>
+          </select>
+          <button class="btn btn-outline-secondary" type="button" @click="addFilter()" :disabled="(filter.time[0] == 0 || filter.time[2] == 0)&&filter.address==''">Apply</button>
+        </div>
+        <div class="btn-group btn-group-sm" role="group" v-for="(f, i) in filter.active">
+          <button type="button" class="btn btn-secondary" disabled>{{f}}</button>
+          <button type="button" class="btn btn-secondary" @click="removeFilter(i)">&#10005;</button>
+        </div>
+      </div>
+      <div class="container">
+        <div align="left" class="my-2 border" v-for="coin in coins" v-if="coin.filterCount >0">
+          <div class="m-1 d-flex align-items-center justify-content-between">
+            <div>
+              <span>{{coin.symbol}} {{coin.contract}} [{{coin.filterCount}}]</span>
+              <button class="btn btn-outline-secondary" type="button" @click="show(coin)">{{coin.show ? 'Hide' : 'Show'}}</button>
+            </div>
+            <button class="btn btn-outline-secondary" type="button" @click="pullPrice(coin)" :disabled="!coin.gId">Pull Price</button>
+          </div>
+          <div class="my-1 px-2" v-if="showCoin == coin.contract">
+            <!-- GAS TX -->
+            <div class="m-1 border p-1" v-if="coin.gasOnly.length > 0">
+              <div class="d-flex justify-content-between">
+                <span>Gas Only Tx</span>
+                <span>{{coin.gasOnlyAmt.toFixed(4)}}</span>
+              </div>
+            </div>
+            <!-- Standard TX -->
+            <transaction class="row m-1 border" v-for="(tx,i) in coin.tx" :tx="tx" :coin="coin" :i="i" v-if="tx.amt != 0 && tx.filterShow" :key="keyFilter"></transaction>
+          </div>
+        </div>
+      </div>
+    </div>
+    <template id="transaction">
+      <div>
+        <div class="row">
+          <div class="col py-1" v-if="tx.exclude" align="center">
+            <div class="btn-group btn-group-sm" role="group">
+              <button type="button" class="btn btn-light" disabled>{{tx.time.toLocaleDateString("en-US")}}</button>
+              <button type="button" class="btn btn-light" disabled>EXCLUDED</button>
+              <button type="button" class="btn btn-primary" @click="tx.exclude=false,save(tx)">Enable</button>
+            </div>
+          </div>
+          <!-- DATE -->
+          <div class="col-2 py-1" v-if="!tx.exclude">
+            <div class="input-group" v-if="editDate">
+              <input type="number" class="form-control" v-model="tx.timeStamp" v-on:change="save(tx)">
+            </div>
+            <div class="btn-group btn-group-sm" role="group">
+              <button type="button" class="btn btn-secondary" @click="editDate = !editDate" :disabled="!tx.mayEdit">{{tx.time.toLocaleDateString("en-US")}}</button>
+              <button type="button" class="btn btn-light" @click="copy(tx)">&#x1F4CB;</button>
+              <button type="button" class="btn btn-light" @click="tx.exclude=true,save(tx)">&#x1F5D1;</button>
+            </div>
+            <div>{{tx.address.slice(0,10)}}...</div>
+          </div>
+          <!-- AMOUNT INPUT -->
+          <div class="col" v-if="!tx.exclude">
+            <div class="input-group" :key="keyValue">
+              <span class="input-group-text">
+                <div class="arrow" :class="tx.isIn ? 'arrow-in' : 'arrow-out'"></div>
+              </span>
+              <input type="number" class="form-control" placeholder="0" v-model="tx.amt" style="max-width:150px;" v-on:change="tx.amt=Number(tx.setAmt),save(tx)" :disabled="!tx.mayEdit">
+              <span class="input-group-text" v-if="tx.symbol == 'WETH'">WETH</span>
+              <span class="input-group-text">T {{tx.coinTotal.toFixed(4)}}</span>
+            </div>
+          </div>
+          <!-- VALUE INPUT -->
+          <div class="col" v-if="!tx.exclude">
+            <div class="input-group" v-if="tx.amt != 0" :key="keyValue">
+              <span class="input-group-text" style="width:64px;">Value</span>
+              <input type="number" class="form-control" placeholder="0" v-model="tx.val" v-on:change="save(tx)">
+              <span class="input-group-text" v-if="tx.washVal > 0">+Wash {{tx.washVal.toFixed(1)}}</span>
+              <span class="input-group-text">{{tx.price.toFixed(2)}}</span>
+              <span class="input-group-text" v-if="tx.isIn">Interest?</span>
+              <div class="input-group-text" v-if="tx.isIn" @click="save(tx)">
+                <input class="form-check-input" type="checkbox" v-model="tx.isInt">
+              </div>
+              <span class="input-group-text" v-if="tx.amt >0 && !tx.isIn">Ignore?</span>
+              <div class="input-group-text" v-if="tx.amt >0 && !tx.isIn" @click="save(tx),keyInput++">
+                <input class="form-check-input" type="checkbox" v-model="tx.ignore">
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- LINKED TX -->
+        <div class="row p-1">
+          <div class="col d-flex" :key="keyInput" v-if="tx.linked.length>0 && !tx.exclude && tx.amt != 0">
+            <div class="input-group input-group-sm" v-if="tx.amt != 0" :key="keyValue">
+              <span class="input-group-text">Links</span>
+              <span class="input-group-text">Ignore?</span>
+              <div class="input-group-text" @click="save(tx),keyValue++">
+                <input class="form-check-input" type="checkbox" v-model="tx.ignoreLinks">
+              </div>
+              <div class="btn-group btn-group-sm" role="group" v-for="ltx in tx.linked">
+                <button type="button" class="btn btn-light" disabled>
+                  <span class="arrow" :class="ltx.isIn ? 'arrow-in' : 'arrow-out'"></span>
+                </button>
+                <button type="button" class="btn btn-light" @click="tx.val = ltx.val,save(tx)">
+                  <span>{{ltx.symbol}} ${{ltx.val.toFixed(2)}}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+          <!-- COST TX -->
+          <div class="col d-flex" v-if="HIFO.length > 0 && !tx.exclude" :key="keyInput">
+            <div class="mx-2">HIFO [{{HIFOamt.toFixed(4)}}]</div>
+            <button type="button" class="btn btn-sm" :class="htx.isWash ? 'btn-warning' : htx.profit < 0 ? 'btn-secondary': 'btn-success'" v-for="(htx, i) in HIFO">
+              <span>{{htx.buyDate}} @{{htx.buyPrice.toFixed(2)}}, ${{htx.profit.toFixed(1)}}</span>
+            </button>
+          </div>
+          <!-- OUTPUT TX -->
+          <div class="col" v-if="tx.outputs.length > 0 && !tx.exclude" :key="keyInput">
+            <div class="input-group input-group-sm">
+              <span class="input-group-text">Outputs [{{tx.outputs.length}}] [R {{R.toFixed(4)}}]</span>
+              <select class="form-select">
+                <option v-for="otx in tx.outputs">{{otx[0]}} {{otx[1]}}</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
+  </body>
+  <script src="lib/vue.2.5.16.min.js"></script>
+  <script src="lib/jquery-3.3.1.min.js"></script>
+  <script src="lib/bootstrap.bundle.min.js"></script>
+  <script type="module" src="main.js"></script>
+</html>
